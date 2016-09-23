@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -10,7 +8,6 @@ import (
 	"os"
 	"reflect"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -167,60 +164,54 @@ func header(r *http.Request, key string) (string, bool) {
 
 func awss3(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	bytesRange := r.Header.Get("Range")
 
-	idx := strings.Index(path, "symlink.json")
-	if idx > -1 {
-		symlink, err := s3get(c.s3Bucket, c.s3KeyPrefix+path[:idx+12])
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var link Symlink
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(symlink.Body)
-		err = json.Unmarshal(buf.Bytes(), &link)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		path = link.URL + path[idx+12:]
-	}
-
-	if strings.HasSuffix(path, "/") {
-		path += "index.html"
-	}
-	obj, err := s3get(c.s3Bucket, c.s3KeyPrefix+path)
+	obj, err := s3get(c.s3Bucket, c.s3KeyPrefix+path, bytesRange)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	if len(c.httpCacheControl) > 0 {
 		setStrHeader(w, "Cache-Control", &c.httpCacheControl)
 	} else {
 		setStrHeader(w, "Cache-Control", obj.CacheControl)
 	}
+
 	if len(c.httpExpires) > 0 {
 		setStrHeader(w, "Expires", &c.httpExpires)
 	} else {
 		setStrHeader(w, "Expires", obj.Expires)
 	}
+
+	setStrHeader(w, "Accept-Ranges", obj.AcceptRanges)
 	setStrHeader(w, "Content-Disposition", obj.ContentDisposition)
 	setStrHeader(w, "Content-Encoding", obj.ContentEncoding)
 	setStrHeader(w, "Content-Language", obj.ContentLanguage)
 	setIntHeader(w, "Content-Length", obj.ContentLength)
 	setStrHeader(w, "Content-Range", obj.ContentRange)
 	setStrHeader(w, "Content-Type", obj.ContentType)
+	setStrHeader(w, "ETag", obj.ETag)
 	setTimeHeader(w, "Last-Modified", obj.LastModified)
+
+	if len(bytesRange) > 0 {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 
 	io.Copy(w, obj.Body)
 }
 
-func s3get(backet, key string) (*s3.GetObjectOutput, error) {
+func s3get(backet, key string, bytesRange string) (*s3.GetObjectOutput, error) {
 	sess := session.New(aws.NewConfig().WithRegion(c.awsRegion))
 	req := &s3.GetObjectInput{
 		Bucket: aws.String(backet),
 		Key:    aws.String(key),
 	}
+
+	if len(bytesRange) > 0 {
+		req.Range = aws.String(bytesRange)
+	}
+
 	return s3.New(sess).GetObject(req)
 }
 

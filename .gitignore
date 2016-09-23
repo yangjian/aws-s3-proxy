@@ -1,2 +1,3 @@
 vendor/*
 aws-s3-proxy
+aws-s3-proxy.linux*
